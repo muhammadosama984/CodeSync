@@ -5,7 +5,6 @@ import sys
 from textwrap import indent
 
 
-class GitObject:
     
 
 
@@ -14,7 +13,7 @@ class GitObject:
 class Repository:
     def __init__(self, path = "."):
         self.path = Path(path).resolve()
-        self.git_dir = self.path / ".pygit"
+        self.git_dir = self.path / ".mogit"
 
         self.objects_dir = self.git_dir / "objects"
         self.refs_dir = self.git_dir / "refs"
