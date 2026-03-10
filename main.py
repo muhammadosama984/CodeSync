@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 from textwrap import indent
-from typing import Dict
+from typing import Dict, List, Tuple
 import zlib
 
 
@@ -39,6 +39,41 @@ class Blob(GitObjects):
     
     def get_content(self) -> bytes:
         return self.content
+
+
+class Tree(GitObjects):
+    def __init__(self, entries: List[Tuple[str, str, str]]):
+        self.entries = entries or []
+        super().__init__('tree', self._serialize_entries())
+
+    def _serialize_entry(self) -> bytes:
+        content = b""
+        for mode, name, blob_hash in sorted(self.entries):
+            content += f"{mode} {name}\0".encode()
+            content += bytes.fromhex(blob_hash)
+        return content
+
+    def add_entry(self, mode: str, name: str, blob_hash: str) -> None:
+        self.entries.append((mode, name, blob_hash))
+        self.content = self._serialize_entries()
+
+    @classmethod
+    def from_content(cls, content: bytes) -> Tree:
+        tree = cls([])
+        i = 0
+        while i < len(content):
+            null_index = content.find(b"\0", i)
+            if null_index == -1:
+                break;
+            
+            mode_name = content[i:null_index].decode()
+            mode, name = mode_name.split(" ", 1)
+            obj_hash = content[null_index + 1:null_index + 21].hex()
+            tree.entries.append((mode, name, obj_hash))
+            i = null_index + 21
+        return tree
+
+
 
 class Repository:
     def __init__(self, path = "."):
@@ -161,6 +196,19 @@ class Repository:
         print(f"Initialized empty PyGIT repository in {self.git_dir}")
         return True
 
+    def create_tree_from_index(self):
+        index = self.load_index()
+        if not index:
+            tree = Tree()
+            return self.store_objects(tree)
+        
+
+    
+    def commit(self, message: str, author: str = 'Anonymous') -> None:  
+        # create a tree object from the index (staging area)
+        tree_hash = self.create_tree_from_index()
+        pass
+
 
 
 def main():
@@ -175,6 +223,11 @@ def main():
     # add command
     add_parser = subparsers.add_parser('add', help='Add files to the staging area')
     add_parser.add_argument('paths', nargs='+', help='Files and directories to add')
+
+    # commit command
+    commit_parser = subparsers.add_parser('commit', help='Commit changes to the repository')
+    commit_parser.add_argument('-m', '--message', help='Commit message', required=True)
+    commit_parser.add_argument('--author', help='Author name')
 
     args = parser.parse_args()
  
@@ -197,6 +250,12 @@ def main():
             print(args.paths)
             for path in args.paths:
                 repo.add_path(path)
+        elif args.command == 'commit':
+            if not repo.git_dir.exists():
+                print(f"Error: Not a repository")
+                return
+            author = args.author or 'Anonymous'
+            repo.commit(args.message, author)
     except Exception as e:
         print(f'Error: {e}')
         sys.exit(1)
