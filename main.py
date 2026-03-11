@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 from textwrap import indent
+import time
 from typing import Dict, List, Tuple
 import zlib
 
@@ -42,11 +43,11 @@ class Blob(GitObjects):
 
 
 class Tree(GitObjects):
-    def __init__(self, entries: List[Tuple[str, str, str]]):
+    def __init__(self, entries: List[Tuple[str, str, str]] = None):
         self.entries = entries or []
         super().__init__('tree', self._serialize_entries())
 
-    def _serialize_entry(self) -> bytes:
+    def _serialize_entries(self) -> bytes:
         content = b""
         for mode, name, blob_hash in sorted(self.entries):
             content += f"{mode} {name}\0".encode()
@@ -75,6 +76,56 @@ class Tree(GitObjects):
 
 
 
+class Commit(GitObjects):
+    def __init__(self, tree_hash: str, parent_hash: List[str], author: str, committer: str, message: str, timestamp: int = None):
+        self.tree_hash = tree_hash
+        self.parent_hash = parent_hash
+        self.author = author
+        self.committer = committer
+        self.message = message
+        self.timestamp = timestamp or int(time.time())
+        super().__init__('commit', self._serialize_commit())
+    
+    def _serialize_commit(self) -> bytes:
+        lines = [f"tree {self.tree_hash}"]
+        for parent in self.parent_hash:
+            lines.append(f"parent {parent}")
+        lines.append(f"author {self.author} {self.timestamp} +0000")
+        lines.append(f"committer {self.committer} {self.timestamp} +0000")
+        lines.append("")
+        lines.append(self.message)
+        return "\n".join(lines).encode()
+    
+    @classmethod
+    def from_content(cls, content: bytes) -> Commit:
+        lines = content.decode().split("\n")
+        tree_hash = None
+        parent_hashes = []
+        author = None
+        committer = None
+        message_start = 0
+
+        for i, line in enumerate(lines):
+            if line.startswith("tree "):
+                tree_hash = line[5:]
+            elif line.startswith("parent "):
+                parent_hashes.append(line[7:])
+            elif line.startswith("author "):
+                author_parts = line[7:].rsplit(" ", 2)
+                author = author_parts[0]
+                timestamp = int(author_parts[1])
+                timezone = author_parts[2]
+            elif line.startswith("committer "):
+                committer_parts = line[10:].rsplit(" ", 2)
+                committer = committer_parts
+            elif line == "":
+                message_start = i + 1
+                break
+        
+        message = "\n".join(lines[message_start:])
+        return cls(tree_hash, parent_hashes, author, committer, message, timestamp)
+
+    
 class Repository:
     def __init__(self, path = "."):
         self.path = Path(path).resolve()
@@ -102,8 +153,8 @@ class Repository:
         if not self.index_file.exists():
             return {}
         try:
-            return json.load(self.index_file.read_text())
-        except:
+            return json.loads(self.index_file.read_text())
+        except Exception:
             return {}
 
     def save_index(self, index: Dict[str, str]) -> None:
@@ -195,6 +246,14 @@ class Repository:
 
         print(f"Initialized empty PyGIT repository in {self.git_dir}")
         return True
+    
+    # we calculate file path from hash and deserialize the object
+    def load_objects(self, obj_hash: str) -> GitObjects:
+        obj_dir = self.objects_dir / obj_hash[:2]
+        obj_file = obj_dir / obj_hash[2:]
+        if not obj_file.exists():
+            raise FileNotFoundError(f"Object not found: {obj_hash}")
+        return GitObjects.deserialize(obj_file.read_bytes())
 
     def create_tree_from_index(self):
         index = self.load_index()
@@ -202,12 +261,106 @@ class Repository:
             tree = Tree()
             return self.store_objects(tree)
         
+        dirs = {}
+        files = {}
+        for file_path, blob_hash in index.items():
+            parts = file_path.split('/')
+            if len(parts) == 1:
+                files[parts[0]] = blob_hash
+            else:
+                dir_name = parts[0]
+                if dir_name not in dirs:
+                    dirs[dir_name] = {}
+
+                current = dirs[dir_name]
+                for part in parts[1:-1]: # want to skip the last part because it is the blob hash
+                    if part not in current:
+                        current[part] = {}
+                    current = current[part]
+                
+                current[parts[-1]] = blob_hash
+        def create_tree_recursive(entries: dict):
+            tree = Tree()
+            for name, blob_hash in entries.items(): # blob_hash is a value of the key in the dictionary
+                if isinstance(blob_hash, str): 
+                    tree.add_entry('100644', name, blob_hash) # 100644 is the mode for a file
+                elif isinstance(blob_hash, dict): 
+                    subtree_hash = create_tree_recursive(blob_hash)
+                    tree.add_entry('40000', name, subtree_hash)
+            return self.store_objects(tree)
+
+
+        root_entries = {**files}
+        for dir_name, dir_contents in dirs.items():
+            root_entries[dir_name] = dir_contents
+
+        return create_tree_recursive(root_entries)
+
+    
+    def get_current_branch(self) -> str:
+        if not self.head_file.exists():
+            return "master"
+        head_content = self.head_file.read_text().strip()
+        # if head_content.startswith("ref: "):
+        #     ref = head_content[5:]
+        #     # Return short name for path: refs/heads/master -> master
+        #     return ref.replace("refs/heads/", "") if ref.startswith("refs/heads/") else ref
+        if head_content.startswith("ref: refs/heads/"):
+            return head_content[16:]
+        return "HEAD"
+
+    def get_brach_commit(self, branch: str) -> str:
+        branch_file = self.heads_dir / branch
+        if branch_file.exists():
+            return branch_file.read_text().strip()
+        return None
+
+    def set_brach_commit(self, branch: str, commit_hash: str) -> None:
+        branch_file = self.heads_dir / branch
+        branch_file.write_text(commit_hash + "\n")
 
     
     def commit(self, message: str, author: str = 'Anonymous') -> None:  
+
+
         # create a tree object from the index (staging area)
         tree_hash = self.create_tree_from_index()
-        pass
+        current_branch = self.get_current_branch()
+        parent_commit = self.get_brach_commit(current_branch)
+        parent_hashes = [parent_commit] if parent_commit else []
+
+        # some edge cases to handle - check index FIRST before creating tree
+        index = self.load_index()
+        if not index:
+            print(f"No changes to commit")
+            return None
+
+        if parent_commit:
+            parent_git_commit_obj = self.load_objects(parent_commit)
+            parent_commit_data = Commit.from_content(parent_git_commit_obj.content)
+            if tree_hash == parent_commit_data.tree_hash:
+                print(f"No changes to commit")
+                return None
+
+
+
+
+        commit = Commit(
+            tree_hash = tree_hash, 
+            parent_hash = parent_hashes, 
+            author = author, 
+            committer = author, 
+            message = message, 
+            timestamp = int(time.time())
+        )
+
+        commit_hash = self.store_objects(commit)
+
+        self.set_brach_commit(current_branch, commit_hash)
+        self.save_index({})
+        print(f"Committed changes to {commit_hash} on branch {current_branch}")
+        return commit_hash
+
 
 
 
@@ -264,3 +417,4 @@ main()
 
 
 # add garbage collector that if file change so old one is deleted
+# add unit test for all this 
