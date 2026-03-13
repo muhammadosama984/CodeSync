@@ -360,7 +360,17 @@ class Repository:
         self.save_index({})
         print(f"Committed changes to {commit_hash} on branch {current_branch}")
         return commit_hash
-
+        
+    def checkout(self, branch: str, create_branch: bool = False) -> None:
+        if not self.git_dir.exists():
+            print(f"Error: Not a repository")
+            return
+        if create_branch:
+            pass
+        else:
+            print(f"Branch {branch} does not exist")
+            print(f"Use 'git checkout -b {branch}' to create a new branch")
+            return
 
 
 
@@ -381,6 +391,17 @@ def main():
     commit_parser = subparsers.add_parser('commit', help='Commit changes to the repository')
     commit_parser.add_argument('-m', '--message', help='Commit message', required=True)
     commit_parser.add_argument('--author', help='Author name')
+
+    # checkout command
+    checkout_parser = subparsers.add_parser('checkout', help='Checkout a branch')
+    checkout_parser.add_argument('branch', help='Branch to checkout')
+    checkout_parser.add_argument(
+        '-b', 
+        '--branch', 
+        help='Branch to checkout',
+        action='store_true', 
+        required=True, 
+        help='Create a new branch and checkout to it')
 
     args = parser.parse_args()
  
@@ -409,6 +430,11 @@ def main():
                 return
             author = args.author or 'Anonymous'
             repo.commit(args.message, author)
+        elif args.command == 'checkout':
+            if not repo.git_dir.exists():
+                print(f"Error: Not a repository")
+                return
+            repo.checkout(args.branch, args.create_branch)
     except Exception as e:
         print(f'Error: {e}')
         sys.exit(1)
