@@ -1,5 +1,0 @@
-- There are 4 types of objects 
-  1. Blob
-  2. Commit
-  3. trees # are use to know which file belongs to which folder and what blob is associated with the file
-  4. Tags   ( will not focus on this one)

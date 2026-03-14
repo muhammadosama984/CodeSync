@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 from textwrap import indent
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 import zlib
 
 
@@ -37,10 +37,6 @@ class GitObjects:
 class Blob(GitObjects):
     def __init__(self, content: bytes):
         super().__init__('blob', content)
-    
-    def get_content(self) -> bytes:
-        return self.content
-
 
 class Tree(GitObjects):
     def __init__(self, entries: List[Tuple[str, str, str]] = None):
@@ -309,7 +305,7 @@ class Repository:
             return head_content[16:]
         return "HEAD"
 
-    def get_brach_commit(self, branch: str) -> str:
+    def get_branch_commit(self, branch: str) -> str:
         branch_file = self.heads_dir / branch
         if branch_file.exists():
             return branch_file.read_text().strip()
@@ -326,7 +322,7 @@ class Repository:
         # create a tree object from the index (staging area)
         tree_hash = self.create_tree_from_index()
         current_branch = self.get_current_branch()
-        parent_commit = self.get_brach_commit(current_branch)
+        parent_commit = self.get_branch_commit(current_branch)
         parent_hashes = [parent_commit] if parent_commit else []
 
         # some edge cases to handle - check index FIRST before creating tree
@@ -341,9 +337,6 @@ class Repository:
             if tree_hash == parent_commit_data.tree_hash:
                 print(f"No changes to commit")
                 return None
-
-
-
 
         commit = Commit(
             tree_hash = tree_hash, 
@@ -360,21 +353,105 @@ class Repository:
         self.save_index({})
         print(f"Committed changes to {commit_hash} on branch {current_branch}")
         return commit_hash
+
+    def get_files_from_tree_recursive(self, tree_hash: str, prefix: str = '') -> set:
+        files = set()
+        try:
+            tree_obj = self.load_objects(tree_hash)
+            tree = Tree.from_content(tree_obj.content)
+            for mode, name, obj_hash in tree.entries:
+                full_name = f"{prefix}{name}" 
+                if mode.startswith('100'):
+                    files.add(full_name)
+                elif mode.startswith('400'):
+                    subtree_files = self.get_files_from_tree_recursive(obj_hash, f"{full_name}/")
+                    files.update(subtree_files)   
+                else:
+                    print(f"Warning: Unknown mode {mode} in tree {tree_hash}")
+        except Exception as e:
+            print(f"Warning: Could not read tree {tree_hash}: {e}")
+        return files
+        
         
     def checkout(self, branch: str, create_branch: bool = False) -> None:
-        if not self.git_dir.exists():
-            print(f"Error: Not a repository")
+        # computed the files to clear from the previous commit
+        previous_branch = self.get_current_branch()
+        files_to_clear = set()
+        try:
+            previous_commit_hash = self.get_branch_commit(previous_branch)
+            if previous_commit_hash:
+                prev_commit_object = self.load_objects(previous_commit_hash)
+                prev_commit = Commit.from_content(prev_commit_object.content)
+                if prev_commit.tree_hash:
+                    files_to_clear = self.get_files_from_tree_recursive(prev_commit.tree_hash)
+
+        except Exception as e:
+            files_to_clear = set()
+        
+        # created a new branch 
+        branch_file = self.heads_dir / branch
+        if not branch_file.exists():
+            if not self.git_dir.exists():
+                print(f"Error: Not a repository")
+                return 
+            if create_branch:
+                if previous_commit_hash:
+                    self.set_brach_commit(branch, previous_commit_hash)
+                    print(f"Created new branch {branch} and checked it out")
+                else:
+                    print(f"No commit found on branch {current_branch}")
+                    return
+            else:
+                print(f"Branch {branch} does not exist")
+                print(f"Use 'git checkout -b {branch}' to create a new branch")
+                return
+        # update the HEAD file to point to the new branch 
+        self.head_file.write_text(f"ref: refs/heads/{branch}\n")
+
+        # restore working directory
+        self.restore_working_directory(branch, files_to_clear)
+        print(f"Switched to a new branch '{branch}'")     
+
+    def restore_tree(self, tree_hash: str, path: Path) -> None:
+            tree_obj = self.load_objects(tree_hash)
+            tree = Tree.from_content(tree_obj.content)
+            for mode, name, obj_hash in tree.entries:
+                file_path = path / name
+                if mode.startswith('100'):
+                    blob_obj = self.load_objects(obj_hash)
+                    blob = Blob(blob_obj.content)
+                    file_path.write_bytes(blob.content)
+                elif mode.startswith('400'):
+                    file_path.mkdir(exist_ok=True)
+                    self.restore_tree(obj_hash, file_path)  
+
+        
+    def restore_working_directory(self, branch: str, files_to_clear: Optional[set] = None) -> None:
+        target_commit_hash = self.get_branch_commit(branch)
+        if not target_commit_hash:
             return
-        if create_branch:
-            pass
-        else:
-            print(f"Branch {branch} does not exist")
-            print(f"Use 'git checkout -b {branch}' to create a new branch")
-            return
+        # remove files tracked by the previous branch
+
+        for relative_path in sorted(files_to_clear):
+            file_path = self.path / relative_path
+            try:
+                if file_path.is_file():
+                    file_path.unlink()
+            except Exception as e:
+                pass
+
+
+        target_commit_object = self.load_objects(target_commit_hash)
+        target_commit = Commit.from_content(target_commit_object.content)
+        if target_commit.tree_hash:
+            self.restore_tree(target_commit.tree_hash, self.path)
+            self.save_index({})
 
 
 
-def main():
+
+
+def main(): 
     parser = argparse.ArgumentParser(
         description='PyGIT - A simple git clone'
     )
@@ -396,11 +473,9 @@ def main():
     checkout_parser = subparsers.add_parser('checkout', help='Checkout a branch')
     checkout_parser.add_argument('branch', help='Branch to checkout')
     checkout_parser.add_argument(
-        '-b', 
-        '--branch', 
-        help='Branch to checkout',
-        action='store_true', 
-        required=True, 
+        '-b',
+        action='store_true',
+        dest='create_branch',
         help='Create a new branch and checkout to it')
 
     args = parser.parse_args()
