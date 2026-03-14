@@ -4,7 +4,6 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from textwrap import indent
 import time
 from typing import Dict, List, Optional, Tuple
 import zlib
@@ -133,6 +132,9 @@ class Repository:
         self.head_file = self.git_dir / "HEAD"
 
         self.index_file = self.git_dir / "index"
+
+    def _branch_file(self, branch: str) -> Path:
+        return self.heads_dir / branch
 
     def store_objects(self, obj: GitObjects) -> str:
         obj_hash = obj.hash()
@@ -306,14 +308,18 @@ class Repository:
         return "HEAD"
 
     def get_branch_commit(self, branch: str) -> str:
-        branch_file = self.heads_dir / branch
+        branch_file = self._branch_file(branch)
         if branch_file.exists():
             return branch_file.read_text().strip()
         return None
 
     def set_brach_commit(self, branch: str, commit_hash: str) -> None:
-        branch_file = self.heads_dir / branch
+        branch_file = self._branch_file(branch)
         branch_file.write_text(commit_hash + "\n")
+
+    # Backward-compatible wrapper for callers that use the correctly-spelled name.
+    def set_branch_commit(self, branch: str, commit_hash: str) -> None:
+        self.set_brach_commit(branch, commit_hash)
 
     
     def commit(self, message: str, author: str = 'Anonymous') -> None:  
@@ -389,7 +395,7 @@ class Repository:
             files_to_clear = set()
         
         # created a new branch 
-        branch_file = self.heads_dir / branch
+        branch_file = self._branch_file(branch)
         if not branch_file.exists():
             if not self.git_dir.exists():
                 print(f"Error: Not a repository")
@@ -451,7 +457,7 @@ class Repository:
     def branch(self, branch_name: str, delete: bool = False):
         # delete
         if delete and branch_name:
-            branch_file = self.heads_dir / branch_name
+            branch_file = self._branch_file(branch_name)
             if branch_file.exists():
                 branch_file.unlink()
                 print(f"Deleted branch {branch_name}")
@@ -469,10 +475,11 @@ class Repository:
             else:
                 print(f"No commits yet, cannot create a new branch")
         else:
-            branches = []
-            for branch_file in self.heads_dir.iterdir():
-                if branch_file.is_file() and not branch_file.name.startswith("."):
-                    branches.append(branch_file.name)
+            branches = [
+                branch_file.name
+                for branch_file in self.heads_dir.iterdir()
+                if branch_file.is_file() and not branch_file.name.startswith(".")
+            ]
 
             for branch in sorted(branches):
                 current_marker = "* " if branch == current_branch else "  "
