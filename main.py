@@ -669,39 +669,32 @@ def main():
             return False
         return True
 
+    def handle_add() -> None:
+        print(args.paths)
+        for path in args.paths:
+            repo.add_path(path)
 
     try:
         if args.command == 'init':
             if not repo.init():
-                print(f"Repository already initialized")
-                return
-        elif args.command == 'add':
-            if not ensure_repo_initialized():
-                return
-            print(args.paths)
-            for path in args.paths:
-                repo.add_path(path)
-        elif args.command == 'commit':
-            if not ensure_repo_initialized():
-                return
-            author = args.author or 'Anonymous'
-            repo.commit(args.message, author)
-        elif args.command == 'checkout':
-            if not ensure_repo_initialized():
-                return
-            repo.checkout(args.branch, args.create_branch)
-        elif args.command == 'branch':
-            if not ensure_repo_initialized():
-                return
-            repo.branch(args.name, args.delete)
-        elif args.command == 'log':
-            if not ensure_repo_initialized():
-                return
-            repo.log(args.limit)
-        elif args.command == 'status':
-            if not ensure_repo_initialized():
-                return
-            repo.status()
+                print("Repository already initialized")
+            return
+
+        if not ensure_repo_initialized():
+            return
+
+        handlers = {
+            'add': handle_add,
+            'commit': lambda: repo.commit(args.message, args.author or 'Anonymous'),
+            'checkout': lambda: repo.checkout(args.branch, args.create_branch),
+            'branch': lambda: repo.branch(args.name, args.delete),
+            'log': lambda: repo.log(args.limit),
+            'status': repo.status,
+        }
+
+        handler = handlers.get(args.command)
+        if handler:
+            handler()
     except Exception as e:
         print(f'Error: {e}')
         sys.exit(1)
