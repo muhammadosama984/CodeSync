@@ -495,8 +495,125 @@ class Repository:
             commit_hash = commit.parent_hash[0] if commit.parent_hash else None
             count += 1
             
+    def build_index_from_tree(self, tree_hash: str, prefix: str = '') -> dict:
+        index = {}
+        try:
+            tree_obj = self.load_objects(tree_hash)
+            tree = Tree.from_content(tree_obj.content)
+            # list<tuple<str, str, str>>
+            for mode, name, obj_hash in tree.entries:
+                full_name = f"{prefix}{name}"
+                if mode.startswith("100"):
+                    index[full_name] = obj_hash
+                elif mode.startswith("400"):
+                    subindex = self.build_index_from_tree(obj_hash, f"{full_name}/")
 
+                    index.update(subindex)
+        except Exception as e:
+            print(f"Warning: Could not read tree {tree_hash}: {e}")
 
+        return index
+
+    def get_all_files(self) -> List[Path]:
+        files = []
+
+        for item in self.path.rglob("*"):
+            if ".git" in item.parts:
+                continue
+
+            if item.is_file():
+                files.append(item)
+
+        return files
+
+    def status(self):
+        # what branch we are on
+        current_branch = self.get_current_branch()
+        print(f"On branch {current_branch}")
+        index = self.load_index()
+        current_commit_hash = self.get_branch_commit(current_branch)
+
+        # build the index of the latest commit
+        last_index_files = {}
+        if current_commit_hash:
+            try:
+                commit_obj = self.load_object(current_commit_hash)
+                commit = Commit.from_content(commit_obj.content)
+                if commit.tree_hash:
+                    last_index_files = self.build_index_from_tree(commit.tree_hash)
+            except:
+                last_index_files = {}
+
+        # figure out all the files present within the working directory
+        working_files = {}  # file name -> hash
+        for item in self.get_all_files():
+            rel_path = str(item.relative_to(self.path))
+
+            try:
+                content = item.read_bytes()
+                blob = Blob(content)
+                working_files[rel_path] = blob.hash()
+            except:
+                continue
+
+        staged_files = []
+        unstaged_files = []
+        untracked_files = []
+        deleted_files = []
+
+        # what files are staged for commit
+        for file_path in set(index.keys()) | set(last_index_files.keys()):
+            index_hash = index.get(file_path)
+            last_index_hash = last_index_files.get(file_path)
+
+            if index_hash and not last_index_hash:
+                staged_files.append(("new file", file_path))
+            elif index_hash and last_index_hash and index_hash != last_index_hash:
+                staged_files.append(("modified", file_path))
+
+        if staged_files:
+            print("\nChanges to be committed:")
+            for stage_status, file_path in sorted(staged_files):
+                print(f"   {stage_status}: {file_path}")
+
+        # what files have modified but not staged
+        for file_path in working_files:
+            if file_path in index:
+                if working_files[file_path] != index[file_path]:
+                    unstaged_files.append(file_path)
+
+        if unstaged_files:
+            print("\nChanges not staged for commit:")
+            for file_path in sorted(unstaged_files):
+                print(f"   modified: {file_path}")
+
+        # what files are untracked
+        for file_path in working_files:
+            if file_path not in index and file_path not in last_index_files:
+                untracked_files.append(file_path)
+
+        if untracked_files:
+            print("\nUntracked files:")
+            for file_path in sorted(untracked_files):
+                print(f"   {file_path}")
+
+        # what files have been deleted
+        for file_path in index:
+            if file_path not in working_files:
+                deleted_files.append(file_path)
+
+        if deleted_files:
+            print("\nDeleted files:")
+            for file_path in sorted(deleted_files):
+                print(f"   deleted: {file_path}")
+
+        if (
+            not staged_files
+            and not unstaged_files
+            and not deleted_files
+            and not untracked_files
+        ):
+            print("\nnothing to commit, working tree clean")
 
 
 def main(): 
@@ -534,6 +651,9 @@ def main():
     # log command
     log_parser = subparsers.add_parser('log', help='Show commit history')
     log_parser.add_argument('-n', '--limit', type=int,default=10,help='Limit the number of commits')
+
+    #status command
+    status_parser = subparsers.add_parser('status', help='Show the status of the working directory')
 
     args = parser.parse_args()
  
@@ -577,6 +697,11 @@ def main():
                 print(f"Error: Not a repository")
                 return
             repo.log(args.limit)
+        elif args.command == 'status':
+            if not repo.git_dir.exists():
+                print(f"Error: Not a repository")
+                return
+            repo.status()
     except Exception as e:
         print(f'Error: {e}')
         sys.exit(1)
