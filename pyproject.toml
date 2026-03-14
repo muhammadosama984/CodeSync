@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codesync"
+version = "0.1.0"
+description = "A simple git clone - PyGIT"
+requires-python = ">=3.9"
+urls = { repository = "https://github.com/muhammadosama984/CodeSync" }
+
+[project.scripts]
+codesync = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
