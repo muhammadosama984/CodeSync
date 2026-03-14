@@ -13,7 +13,7 @@ CodeSync gives you a local version control workflow similar to Git:
 - View commit history
 - Check working directory status (staged, unstaged, untracked, deleted files)
 
-All data is stored in a `.mogit` directory, mirroring how Git uses `.git`.
+All data is stored in a `.codesync` directory, mirroring how Git uses `.git`.
 
 ## Requirements
 
@@ -90,11 +90,11 @@ codesync checkout -b new-branch  # create and switch
 
 ## How It Works
 
-| Concept | Description |
-|---------|-------------|
-| **Blob** | Stores file content, hashed with SHA-1 and compressed with zlib |
-| **Tree** | Represents a directory snapshot (list of blobs) |
-| **Commit** | Points to a tree, parent commit(s), author, and message |
-| **Index** | Staging area stored as JSON in `.mogit/index` |
-| **HEAD** | Points to the current branch in `.mogit/HEAD` |
-| **Refs** | Branch pointers stored in `.mogit/refs/heads/` |
+| Concept    | Description                                                     |
+| ---------- | --------------------------------------------------------------- |
+| **Blob**   | Stores file content, hashed with SHA-1 and compressed with zlib |
+| **Tree**   | Represents a directory snapshot (list of blobs)                 |
+| **Commit** | Points to a tree, parent commit(s), author, and message         |
+| **Index**  | Staging area stored as JSON in `.mogit/index`                   |
+| **HEAD**   | Points to the current branch in `.mogit/HEAD`                   |
+| **Refs**   | Branch pointers stored in `.mogit/refs/heads/`                  |

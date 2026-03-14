@@ -11,6 +11,8 @@ import zlib
 
 
 class GitObjects:
+    """Base object stored in the repository object database."""
+
     def __init__(self, obj_type: str, content: bytes):
         self.type = obj_type
         self.content = content
@@ -34,10 +36,14 @@ class GitObjects:
 
 
 class Blob(GitObjects):
+    """Raw file contents."""
+
     def __init__(self, content: bytes):
         super().__init__('blob', content)
 
 class Tree(GitObjects):
+    """Directory snapshot mapping names to blobs or subtrees."""
+
     def __init__(self, entries: List[Tuple[str, str, str]] = None):
         self.entries = entries or []
         super().__init__('tree', self._serialize_entries())
@@ -72,6 +78,8 @@ class Tree(GitObjects):
 
 
 class Commit(GitObjects):
+    """Commit object that references a tree and optional parent commits."""
+
     def __init__(self, tree_hash: str, parent_hash: List[str], author: str, committer: str, message: str, timestamp: int = None):
         self.tree_hash = tree_hash
         self.parent_hash = parent_hash
@@ -122,6 +130,8 @@ class Commit(GitObjects):
 
     
 class Repository:
+    """High-level repository operations for the local CodeSync store."""
+
     def __init__(self, path = "."):
         self.path = Path(path).resolve()
         self.git_dir = self.path / ".codesync"
@@ -162,17 +172,12 @@ class Repository:
         full_path = self.path / path
         if not full_path.exists():
             raise FileNotFoundError(f"File not found: {path}")
-        
-        # read the file content
-     
+
+        # Store the file as a blob and stage its relative path in the index.
         content = full_path.read_bytes()
-        # create a blob object from the content
         blob = Blob(content)
-        # store the blob object in the database (.git/objects)
         blob_hash = self.store_objects(blob) 
-        # update the index 
         index = self.load_index()
-        # Convert path to relative string for JSON serialization
         relative_path = str(path.relative_to(self.path))
         index[relative_path] = blob_hash
         self.save_index(index)
@@ -180,11 +185,9 @@ class Repository:
         print(f"Added {path} to the staging area")
     
     def add_directory(self, path: Path) -> None:
-        # recursive traverse the directory
-        # create blob objects for all files
-        # store all blobs in the object database (.git/objects)
-        # update the index to include all files
-        # path is already a full path from add_path, so use it directly
+        # Stage every file under the given directory by storing file blobs
+        # and mapping relative paths to blob hashes in the index.
+        # `path` can be absolute (from `add_path`), so normalize it first.
         full_path = path if path.is_absolute() else self.path / path
         if not full_path.exists():
             raise FileNotFoundError(f"Directory not found: {path}")
@@ -194,7 +197,7 @@ class Repository:
         added_count = 0
         for file in full_path.rglob('*'):
             if file.is_file():
-                # Skip files in .mogit or .git directories
+                # Skip VCS metadata directories.
                 if ".codesync" in file.parts or ".git" in file.parts:
                     continue
                 blob = Blob(file.read_bytes())
@@ -217,9 +220,9 @@ class Repository:
         if not full_path.exists():
             raise FileNotFoundError(f"File or directory not found: {path}")
         if full_path.is_file():
-            self.add_file(full_path) # one file
+            self.add_file(full_path)
         elif full_path.is_dir():
-            self.add_directory(full_path) # one or more files
+            self.add_directory(full_path)
         else:
             raise ValueError(f"Invalid path: {path}")
 
@@ -229,15 +232,13 @@ class Repository:
             print(f"Error: {self.git_dir} already exists")
             return False
 
-        # create the git directory
+        # Create the repository layout expected by the remaining commands.
         self.git_dir.mkdir()
         self.objects_dir.mkdir()
         self.refs_dir.mkdir()
         self.heads_dir.mkdir()
 
-
-
-        # create initial HEAD pointing to master
+        # New repositories start with `HEAD` pointing at the default branch.
         self.head_file.write_text("ref: refs/heads/master\n")
 
         self.save_index({})
@@ -245,8 +246,8 @@ class Repository:
         print(f"Initialized empty PyGIT repository in {self.git_dir}")
         return True
     
-    # we calculate file path from hash and deserialize the object
     def load_objects(self, obj_hash: str) -> GitObjects:
+        """Load and deserialize an object by its SHA-1 hash."""
         obj_dir = self.objects_dir / obj_hash[:2]
         obj_file = obj_dir / obj_hash[2:]
         if not obj_file.exists():
@@ -254,6 +255,8 @@ class Repository:
         return GitObjects.deserialize(obj_file.read_bytes())
 
     def create_tree_from_index(self):
+        # Convert the flat index into nested tree objects so commits can
+        # reference a directory snapshot rather than individual staged files.
         index = self.load_index()
         if not index:
             tree = Tree()
@@ -271,7 +274,7 @@ class Repository:
                     dirs[dir_name] = {}
 
                 current = dirs[dir_name]
-                for part in parts[1:-1]: # want to skip the last part because it is the blob hash
+                for part in parts[1:-1]:
                     if part not in current:
                         current[part] = {}
                     current = current[part]
@@ -279,9 +282,9 @@ class Repository:
                 current[parts[-1]] = blob_hash
         def create_tree_recursive(entries: dict):
             tree = Tree()
-            for name, blob_hash in entries.items(): # blob_hash is a value of the key in the dictionary
+            for name, blob_hash in entries.items():
                 if isinstance(blob_hash, str): 
-                    tree.add_entry('100644', name, blob_hash) # 100644 is the mode for a file
+                    tree.add_entry('100644', name, blob_hash)
                 elif isinstance(blob_hash, dict): 
                     subtree_hash = create_tree_recursive(blob_hash)
                     tree.add_entry('40000', name, subtree_hash)
@@ -299,10 +302,6 @@ class Repository:
         if not self.head_file.exists():
             return "master"
         head_content = self.head_file.read_text().strip()
-        # if head_content.startswith("ref: "):
-        #     ref = head_content[5:]
-        #     # Return short name for path: refs/heads/master -> master
-        #     return ref.replace("refs/heads/", "") if ref.startswith("refs/heads/") else ref
         if head_content.startswith("ref: refs/heads/"):
             return head_content[16:]
         return "HEAD"
@@ -317,21 +316,19 @@ class Repository:
         branch_file = self._branch_file(branch)
         branch_file.write_text(commit_hash + "\n")
 
-    # Backward-compatible wrapper for callers that use the correctly-spelled name.
     def set_branch_commit(self, branch: str, commit_hash: str) -> None:
+        """Backward-compatible wrapper around the original method name."""
         self.set_brach_commit(branch, commit_hash)
 
     
     def commit(self, message: str, author: str = 'Anonymous') -> None:  
-
-
-        # create a tree object from the index (staging area)
+        # Build the commit from the staged index and link it to the current
+        # branch head when there are actual changes to record.
         tree_hash = self.create_tree_from_index()
         current_branch = self.get_current_branch()
         parent_commit = self.get_branch_commit(current_branch)
         parent_hashes = [parent_commit] if parent_commit else []
 
-        # some edge cases to handle - check index FIRST before creating tree
         index = self.load_index()
         if not index:
             print(f"No changes to commit")
@@ -380,7 +377,8 @@ class Repository:
         
         
     def checkout(self, branch: str, create_branch: bool = False) -> None:
-        # computed the files to clear from the previous commit
+        # Collect tracked files from the current branch so the working tree can
+        # be replaced with the target branch snapshot.
         previous_branch = self.get_current_branch()
         files_to_clear = set()
         try:
@@ -394,7 +392,7 @@ class Repository:
         except Exception as e:
             files_to_clear = set()
         
-        # created a new branch 
+        # Create the branch from the current commit when `-b` is used.
         branch_file = self._branch_file(branch)
         if not branch_file.exists():
             if not self.git_dir.exists():
@@ -411,10 +409,8 @@ class Repository:
                 print(f"Branch {branch} does not exist")
                 print(f"Use 'git checkout -b {branch}' to create a new branch")
                 return
-        # update the HEAD file to point to the new branch 
+        # Move HEAD and restore the target branch contents into the workspace.
         self.head_file.write_text(f"ref: refs/heads/{branch}\n")
-
-        # restore working directory
         self.restore_working_directory(branch, files_to_clear)
         print(f"Switched to a new branch '{branch}'")     
 
@@ -436,7 +432,9 @@ class Repository:
         target_commit_hash = self.get_branch_commit(branch)
         if not target_commit_hash:
             return
-        # remove files tracked by the previous branch
+
+        # Remove files that belonged to the previous branch before restoring
+        # the target branch tree.
 
         for relative_path in sorted(files_to_clear):
             file_path = self.path / relative_path
@@ -455,7 +453,7 @@ class Repository:
 
         
     def branch(self, branch_name: str, delete: bool = False):
-        # delete
+        # Support both branch creation and deletion from one command entrypoint.
         if delete and branch_name:
             branch_file = self._branch_file(branch_name)
             if branch_file.exists():
@@ -507,7 +505,6 @@ class Repository:
         try:
             tree_obj = self.load_objects(tree_hash)
             tree = Tree.from_content(tree_obj.content)
-            # list<tuple<str, str, str>>
             for mode, name, obj_hash in tree.entries:
                 full_name = f"{prefix}{name}"
                 if mode.startswith("100"):
@@ -534,13 +531,13 @@ class Repository:
         return files
 
     def status(self):
-        # what branch we are on
+        # Compare the last committed tree, the staging index, and the working
+        # directory to report staged, unstaged, and untracked changes.
         current_branch = self.get_current_branch()
         print(f"On branch {current_branch}")
         index = self.load_index()
         current_commit_hash = self.get_branch_commit(current_branch)
 
-        # build the index of the latest commit
         last_index_files = {}
         if current_commit_hash:
             try:
@@ -551,8 +548,7 @@ class Repository:
             except:
                 last_index_files = {}
 
-        # figure out all the files present within the working directory
-        working_files = {}  # file name -> hash
+        working_files = {}
         for item in self.get_all_files():
             rel_path = str(item.relative_to(self.path))
 
@@ -568,7 +564,6 @@ class Repository:
         untracked_files = []
         deleted_files = []
 
-        # what files are staged for commit
         for file_path in set(index.keys()) | set(last_index_files.keys()):
             index_hash = index.get(file_path)
             last_index_hash = last_index_files.get(file_path)
@@ -583,7 +578,6 @@ class Repository:
             for stage_status, file_path in sorted(staged_files):
                 print(f"   {stage_status}: {file_path}")
 
-        # what files have modified but not staged
         for file_path in working_files:
             if file_path in index:
                 if working_files[file_path] != index[file_path]:
@@ -594,7 +588,6 @@ class Repository:
             for file_path in sorted(unstaged_files):
                 print(f"   modified: {file_path}")
 
-        # what files are untracked
         for file_path in working_files:
             if file_path not in index and file_path not in last_index_files:
                 untracked_files.append(file_path)
@@ -604,7 +597,6 @@ class Repository:
             for file_path in sorted(untracked_files):
                 print(f"   {file_path}")
 
-        # what files have been deleted
         for file_path in index:
             if file_path not in working_files:
                 deleted_files.append(file_path)
@@ -629,19 +621,15 @@ def main():
     )
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
-    # init command
     init_parser = subparsers.add_parser('init', help='Initialize a new repository')
 
-    # add command
     add_parser = subparsers.add_parser('add', help='Add files to the staging area')
     add_parser.add_argument('paths', nargs='+', help='Files and directories to add')
 
-    # commit command
     commit_parser = subparsers.add_parser('commit', help='Commit changes to the repository')
     commit_parser.add_argument('-m', '--message', help='Commit message', required=True)
     commit_parser.add_argument('--author', help='Author name')
 
-    # checkout command
     checkout_parser = subparsers.add_parser('checkout', help='Checkout a branch')
     checkout_parser.add_argument('branch', help='Branch to checkout')
     checkout_parser.add_argument(
@@ -650,16 +638,13 @@ def main():
         dest='create_branch',
         help='Create a new branch and checkout to it')
 
-    # branch command
     branch_parser = subparsers.add_parser('branch', help='List, create, or delete branches')
     branch_parser.add_argument('name', nargs='?')
     branch_parser.add_argument('-d', '--delete', action='store_true', help='Delete a branch')
 
-    # log command
     log_parser = subparsers.add_parser('log', help='Show commit history')
     log_parser.add_argument('-n', '--limit', type=int,default=10,help='Limit the number of commits')
 
-    #status command
     status_parser = subparsers.add_parser('status', help='Show the status of the working directory')
 
     args = parser.parse_args()
@@ -707,7 +692,3 @@ def main():
         sys.exit(1)
 
 main()
-
-
-# add garbage collector that if file change so old one is deleted
-# add unit test for all this 
