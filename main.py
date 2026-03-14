@@ -61,7 +61,7 @@ class Tree(GitObjects):
         while i < len(content):
             null_index = content.find(b"\0", i)
             if null_index == -1:
-                break;
+                break
             
             mode_name = content[i:null_index].decode()
             mode, name = mode_name.split(" ", 1)
@@ -479,7 +479,7 @@ class Repository:
                 print(f"{current_marker}{branch}")
 
     def log(self, limit: int = 10) -> None:
-        current_branch = self.get_current_branch()
+        current_branch = self.get_current_branch() 
         commit_hash = self.get_branch_commit(current_branch)
         if not commit_hash:
             print(f"No commits yet")
@@ -663,6 +663,12 @@ def main():
 
     repo = Repository()
 
+    def ensure_repo_initialized() -> bool:
+        if not repo.git_dir.exists():
+            print("Error: Not a repository")
+            return False
+        return True
+
 
     try:
         if args.command == 'init':
@@ -670,36 +676,30 @@ def main():
                 print(f"Repository already initialized")
                 return
         elif args.command == 'add':
-            if not repo.git_dir.exists():
-                print(f"Error: Not a repository")
+            if not ensure_repo_initialized():
                 return
             print(args.paths)
             for path in args.paths:
                 repo.add_path(path)
         elif args.command == 'commit':
-            if not repo.git_dir.exists():
-                print(f"Error: Not a repository")
+            if not ensure_repo_initialized():
                 return
             author = args.author or 'Anonymous'
             repo.commit(args.message, author)
         elif args.command == 'checkout':
-            if not repo.git_dir.exists():
-                print(f"Error: Not a repository")
+            if not ensure_repo_initialized():
                 return
             repo.checkout(args.branch, args.create_branch)
         elif args.command == 'branch':
-            if not repo.git_dir.exists():
-                print(f"Error: Not a repository")
+            if not ensure_repo_initialized():
                 return
             repo.branch(args.name, args.delete)
         elif args.command == 'log':
-            if not repo.git_dir.exists():
-                print(f"Error: Not a repository")
+            if not ensure_repo_initialized():
                 return
             repo.log(args.limit)
         elif args.command == 'status':
-            if not repo.git_dir.exists():
-                print(f"Error: Not a repository")
+            if not ensure_repo_initialized():
                 return
             repo.status()
     except Exception as e:
