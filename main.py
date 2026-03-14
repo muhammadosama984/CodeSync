@@ -124,7 +124,7 @@ class Commit(GitObjects):
 class Repository:
     def __init__(self, path = "."):
         self.path = Path(path).resolve()
-        self.git_dir = self.path / ".mogit"
+        self.git_dir = self.path / ".codesync"
 
         self.objects_dir = self.git_dir / "objects"
         self.refs_dir = self.git_dir / "refs"
@@ -195,7 +195,7 @@ class Repository:
         for file in full_path.rglob('*'):
             if file.is_file():
                 # Skip files in .mogit or .git directories
-                if ".mogit" in file.parts or ".git" in file.parts:
+                if ".codesync" in file.parts or ".git" in file.parts:
                     continue
                 blob = Blob(file.read_bytes())
                 blob_hash = self.store_objects(blob)
