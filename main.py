@@ -478,6 +478,23 @@ class Repository:
                 current_marker = "* " if branch == current_branch else "  "
                 print(f"{current_marker}{branch}")
 
+    def log(self, limit: int = 10) -> None:
+        current_branch = self.get_current_branch()
+        commit_hash = self.get_branch_commit(current_branch)
+        if not commit_hash:
+            print(f"No commits yet")
+            return
+        count = 0
+        while commit_hash and count < limit:
+            commit_object = self.load_objects(commit_hash)
+            commit = Commit.from_content(commit_object.content)
+            print(f"{commit_hash}")
+            print(f"Author: {commit.author}")
+            print(f"Date: {time.ctime(commit.timestamp)}")
+            print(f"Message: {commit.message}\n")
+            commit_hash = commit.parent_hash[0] if commit.parent_hash else None
+            count += 1
+            
 
 
 
@@ -513,6 +530,10 @@ def main():
     branch_parser = subparsers.add_parser('branch', help='List, create, or delete branches')
     branch_parser.add_argument('name', nargs='?')
     branch_parser.add_argument('-d', '--delete', action='store_true', help='Delete a branch')
+
+    # log command
+    log_parser = subparsers.add_parser('log', help='Show commit history')
+    log_parser.add_argument('-n', '--limit', type=int,default=10,help='Limit the number of commits')
 
     args = parser.parse_args()
  
@@ -551,6 +572,11 @@ def main():
                 print(f"Error: Not a repository")
                 return
             repo.branch(args.name, args.delete)
+        elif args.command == 'log':
+            if not repo.git_dir.exists():
+                print(f"Error: Not a repository")
+                return
+            repo.log(args.limit)
     except Exception as e:
         print(f'Error: {e}')
         sys.exit(1)
