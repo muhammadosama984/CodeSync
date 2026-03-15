@@ -81,7 +81,7 @@ codesync branch feature-x        # create a branch
 codesync branch -d feature-x     # delete a branch
 ```
 
-### Switch branches
+### Switch branche
 
 ```bash
 codesync checkout main
